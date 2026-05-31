@@ -140,27 +140,89 @@ final class Algq_Offer_Generator_Plugin {
     }
 
     private static function create_pages() {
-        $pages = [
-            'plugin/offer-generator' => ['Offer Generator', "[vc_column_text]\n[algq_offer_generator]\n[/vc_column_text]"],
-            'plugin/offer-generator/start' => ['Offer Generator - Getting Started', "[vc_column_text]\n<h2>Offer Generator Getting Started</h2>\n<p>Create or upload templates, connect deal data, then generate your first offer.</p>\n[/vc_column_text]"],
-            'plugin/offer-generator/docs' => ['Offer Generator Documentation', "[vc_column_text]\n<h2>Offer Generator Documentation</h2>\n<p>Use merge fields, templates, PDF export, and document version history.</p>\n[/vc_column_text]"],
-            'plugin/offer-generator/templates' => ['Offer Generator Templates', "[vc_column_text]\n<p>Manage Purchase Agreement, LOI, and Seller Financing templates.</p>\n[/vc_column_text]"],
-        ];
-        $created = [];
-        foreach ($pages as $path => $page) {
-            $slug = sanitize_title(basename($path));
-            if (get_page_by_path($path, OBJECT, 'page')) {
-                continue;
-            }
-            $created[$path] = wp_insert_post([
-                'post_title' => sanitize_text_field($page[0]),
-                'post_name' => $slug,
-                'post_content' => wp_kses_post($page[1]),
-                'post_status' => 'publish',
-                'post_type' => 'page',
-            ]);
+        $created = get_option('algq_offer_generated_pages', []);
+        if (!is_array($created)) {
+            $created = [];
         }
+
+        $plugin_parent_id = self::ensure_page('plugin', 'Plugins', '[vc_column_text]\n[algq_offer_generator]\n[/vc_column_text]', 0);
+        $offer_parent_id  = self::ensure_page('offer-generator', 'Offer Generator', '[vc_column_text]\n[algq_offer_generator]\n[/vc_column_text]', $plugin_parent_id);
+
+        $created['plugin'] = $plugin_parent_id;
+        $created['plugin/offer-generator'] = $offer_parent_id;
+
+        $child_pages = [
+            'start' => [
+                'title' => 'Offer Generator - Getting Started',
+                'content' => "[vc_column_text]\n<h2>Offer Generator Getting Started</h2>\n<p>Create or upload templates, connect deal data, and generate the first offer.</p>\n[algq_offer_generator]\n[/vc_column_text]",
+            ],
+            'docs' => [
+                'title' => 'Offer Generator Documentation',
+                'content' => "[vc_column_text]\n<h2>Offer Generator Documentation</h2>\n<p>Use merge fields, templates, PDF export, version history, and deal-linked document records.</p>\n[algq_offer_generator]\n[/vc_column_text]",
+            ],
+            'templates' => [
+                'title' => 'Offer Generator Templates',
+                'content' => "[vc_column_text]\n<h2>Offer Generator Templates</h2>\n<p>Manage Purchase Agreement, Letter of Intent, and Seller Financing templates.</p>\n[algq_offer_generator]\n[/vc_column_text]",
+            ],
+        ];
+
+        foreach ($child_pages as $slug => $page) {
+            $page_id = self::ensure_page($slug, $page['title'], $page['content'], $offer_parent_id);
+            $created['plugin/offer-generator/' . $slug] = $page_id;
+        }
+
         update_option('algq_offer_generated_pages', $created, false);
+    }
+
+    private static function ensure_page($slug, $title, $content, $parent_id = 0) {
+        $slug = sanitize_title($slug);
+        $parent_id = absint($parent_id);
+        $existing = get_page_by_path(self::build_page_path($slug, $parent_id), OBJECT, 'page');
+
+        if (!$existing && $parent_id) {
+            $children = get_pages([
+                'post_type' => 'page',
+                'post_status' => ['publish', 'draft', 'private'],
+                'post_parent' => $parent_id,
+                'name' => $slug,
+                'number' => 1,
+            ]);
+            $existing = !empty($children) ? $children[0] : null;
+        }
+
+        if ($existing instanceof WP_Post) {
+            if (false === strpos((string) $existing->post_content, '[algq_offer_generator]')) {
+                wp_update_post([
+                    'ID' => absint($existing->ID),
+                    'post_content' => wp_kses_post($content),
+                ]);
+            }
+            return absint($existing->ID);
+        }
+
+        $page_id = wp_insert_post([
+            'post_title' => sanitize_text_field($title),
+            'post_name' => $slug,
+            'post_content' => wp_kses_post($content),
+            'post_status' => 'publish',
+            'post_type' => 'page',
+            'post_parent' => $parent_id,
+        ], true);
+
+        return is_wp_error($page_id) ? 0 : absint($page_id);
+    }
+
+    private static function build_page_path($slug, $parent_id) {
+        if (!$parent_id) {
+            return sanitize_title($slug);
+        }
+
+        $parent = get_post($parent_id);
+        if (!$parent instanceof WP_Post) {
+            return sanitize_title($slug);
+        }
+
+        return trim(get_page_uri($parent_id) . '/' . sanitize_title($slug), '/');
     }
 }
 
